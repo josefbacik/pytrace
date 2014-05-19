@@ -1,6 +1,5 @@
 #!/bin/python
 
-import re
 import argparse
 import traceline
 import syscall
