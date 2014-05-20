@@ -85,6 +85,9 @@ continual = False
 
 if not args.infile:
     traceDir = ftrace.getTraceDir()
+    if traceDir == "":
+        print("Please mount debugfs to use this feature")
+        sys.exit(1)
     infile = open(traceDir+"trace_pipe", 'r')
     continual = True
     toggleEvents(True)

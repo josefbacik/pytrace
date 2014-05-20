@@ -34,17 +34,13 @@ def getTraceDir():
     if __m.traceDir != "":
         return __m.traceDir
     f = open("/proc/mounts", "r")
-    mounts_re = re.compile("([a-zA-Z0-9_/\-,]+) ([a-zA-Z0-9_/\-,]+) (\w+) .*")
+    mounts_re = re.compile("([a-zA-Z0-9_/\-,\.:]+) ([a-zA-Z0-9_/\-,\.:]+) (\w+) .*")
     for line in f:
         m = mounts_re.match(line)
         if not m:
-            print("didn't find what we wanted '%s'" % line)
             continue
-        if m.group(1) == "debugfs":
+        if m.group(3) == "debugfs":
             __m.traceDir = m.group(2) + "/tracing/"
-            print("found debugfs")
             break
-        else:
-            print("found '%s'" % m.group(1))
     f.close()
     return __m.traceDir
