@@ -35,6 +35,9 @@ class SchedSwitchEvent(TraceLine):
             raise ValueError
         self.sleeptime = 0.0
         self.stacktrace = ""
+        self.changeCpu = False
 
     def wakeup(self, trace):
         self.sleeptime = trace["timestamp"] - self.trace["timestamp"]
+        if self.trace["cpu"] != trace["cpu"]:
+            self.changeCpu = True

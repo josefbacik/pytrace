@@ -17,12 +17,15 @@ class Process:
         self.comm = event.trace["comm"]
         self.events = { event.stacktrace : event }
         self.sleeptime = event.sleeptime
+        self.cpuChanges = 0
 
     def addEvent(self, event):
         if event.stacktrace in self.events:
             self.events[event.stacktrace].sleeptime += event.sleeptime
         else:
             self.events[event.stacktrace] = event
+        if event.changeCpu:
+            self.cpuChanges += 1
         self.sleeptime += event.sleeptime
 
 def toggleEvents(toggle):
@@ -65,8 +68,8 @@ def printSummary(processes, totalSleep):
     while processes:
         p = findSleepiestProcess(processes)
         process = processes[p]
-        print("\tProcess %s-%d spent %f asleep, %f percentage of total" %
-                (process.comm, process.pid, process.sleeptime, ((process.sleeptime / totalSleep)) * 100))
+        print("\tProcess %s-%d spent %f asleep %d cpu changes, %f percentage of total" %
+                (process.comm, process.pid, process.sleeptime, process.cpuChanges, ((process.sleeptime / totalSleep)) * 100))
         while process.events:
             e = findSleepiestEvent(process.events)
             event = process.events[e]
