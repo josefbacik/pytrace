@@ -16,7 +16,10 @@ class Process:
         self.pid = event.trace["pid"]
         self.comm = event.trace["comm"]
         self.events = { event.stacktrace : event }
+        self.wakeups = { event.wakeupStacktrace : 1 }
+        self.numEvents = 1
         self.sleeptime = event.sleeptime
+        self.waketime = event.waketime
         self.cpuChanges = 0
 
     def addEvent(self, event):
@@ -24,16 +27,26 @@ class Process:
             self.events[event.stacktrace].sleeptime += event.sleeptime
         else:
             self.events[event.stacktrace] = event
+        if event.wakeupStacktrace in self.wakeups:
+            self.wakeups[event.wakeupStacktrace] += 1
+        else:
+            self.wakeups[event.wakeupStacktrace] = 1
+
         if event.changeCpu:
             self.cpuChanges += 1
         self.sleeptime += event.sleeptime
+        self.waketime += event.waketime
+        self.numEvents += 1
 
-def toggleEvents(toggle):
+def toggleEvents(toggle, wakeups):
     if toggle:
         ftrace.enableEvent("sched/sched_switch")
+        if wakeups:
+            ftrace.enableEvent("sched/sched_wakeup")
         ftrace.enableStackTrace()
     else:
         ftrace.disableEvent("sched/sched_switch")
+        ftrace.disableEvent("sched/sched_wakeup")
         ftrace.disableStackTrace()
 
 def signalHandler(signal, frame):
@@ -68,8 +81,8 @@ def printSummary(processes, totalSleep):
     while processes:
         p = findSleepiestProcess(processes)
         process = processes[p]
-        print("\tProcess %s-%d spent %f asleep %d cpu changes, %f percentage of total" %
-                (process.comm, process.pid, process.sleeptime, process.cpuChanges, ((process.sleeptime / totalSleep)) * 100))
+        print("\tProcess %s-%d spent %f asleep %d cpu changes %d sleep/wake cycles, %f percentage of total" %
+                (process.comm, process.pid, process.sleeptime, process.cpuChanges, process.numEvents, ((process.sleeptime / totalSleep)) * 100))
         while process.events:
             e = findSleepiestEvent(process.events)
             event = process.events[e]
@@ -77,10 +90,14 @@ def printSummary(processes, totalSleep):
                     (event.sleeptime, ((event.sleeptime / process.sleeptime) * 100)))
             printStackTrace(event.stacktrace)
             del process.events[e]
+        for trace in sorted(process.wakeups, key=process.wakeups.get, reverse=True):
+            print("\t\tWoken up %d times like this" % process.wakeups[trace])
+            printStackTrace(trace)
         del processes[p]
 
 parser = argparse.ArgumentParser(description="Track top latency reason")
 parser.add_argument('infile', nargs='?', help='Process a tracefile')
+parser.add_argument('-w', action='store_true')
 
 args = parser.parse_args()
 infile = None
@@ -93,14 +110,15 @@ if not args.infile:
         sys.exit(1)
     infile = open(traceDir+"trace_pipe", 'r')
     continual = True
-    toggleEvents(True)
+    toggleEvents(True, args.w)
     signal.signal(signal.SIGINT, signalHandler)
 else:
     infile = open(args.infile, 'r')
 
 processes = {}
 sleeping = {}
-stacktrace = False
+waking = {}
+stacktrace = 0
 start = time.time()
 curEvent = None
 totalSleep = 0.0
@@ -108,18 +126,26 @@ totalSleep = 0.0
 for line in infile:
     trace = traceline.traceParseLine(line)
     if not trace:
-        if stacktrace:
+        if stacktrace > 0:
             func = traceline.parseStacktraceLine(line)
             if not func:
+                stacktrace = 0
+                curEvent = None
                 continue
             if not curEvent:
                 continue
-            if curEvent.stacktrace == "":
-                curEvent.stacktrace = func
+            if stacktrace == 1:
+                if curEvent.stacktrace == "":
+                    curEvent.stacktrace = func
+                else:
+                    curEvent.stacktrace += ":" + func
             else:
-                curEvent.stacktrace += ":" + func
+                if curEvent.wakeupStacktrace == "":
+                    curEvent.wakeupStacktrace = func
+                else:
+                    curEvent.wakeupStacktrace += ":" + func
         continue
-    stacktrace = False
+    stacktrace = 0
     curEvent = None
 
     # We can get a couple of sched events before we start to spit out the stack
@@ -127,10 +153,35 @@ for line in infile:
     # pick out the right event
     if traceline.isStackTrace(trace["data"]):
         if trace["pid"] in sleeping:
-            stacktrace = True
+            # Sometimes we can miss wakeup messages, and we've already gotten a
+            # stacktrace for this event, if this is the case just skip this
+            # stacktrace and delete this event
             curEvent = sleeping[trace["pid"]]
+            if curEvent.stacktrace == "":
+                stacktrace = 1
+            else:
+                curEvent = None
+                del sleeping[trace["pid"]]
+        elif trace["pid"] in waking:
+            stacktrace = 2
+            curEvent = waking[trace["pid"]]
+            del waking[trace["pid"]]
         continue
 
+    # Wakeup actions are going to happen from a different PID for a given PID
+    # so we just want to find the sleeper and start the wakeup timer and then
+    # setup a pending waker so we can scrape it's stacktrace
+    eventDict = sched.schedWakeupParse(trace["data"])
+    if eventDict:
+        if eventDict["pid"] in sleeping:
+            e = sleeping[eventDict["pid"]]
+            e.wakeEvent(trace)
+            waking[trace["pid"]] = e
+        continue
+
+    # Still need to track the sched_switch wakeup part since that is when we
+    # actually load the process onto the CPU and make it do shit.  Only then we
+    # can remove it from our sleeping dict and add it to the process
     eventDict = sched.schedSwitchParse(trace["data"])
     if eventDict["next_pid"] in sleeping:
         e = sleeping[eventDict["next_pid"]]
@@ -142,8 +193,7 @@ for line in infile:
             processes[e.trace["pid"]] = Process(e)
         del sleeping[eventDict["next_pid"]]
 
-    # idle threads all have a pid of 0, just ignore them since they don't matter
-    # anyway
+    # Nobody cares about you idle processes
     if eventDict["prev_pid"] == 0:
         continue
 
@@ -152,6 +202,8 @@ for line in infile:
     if continual and (time.time() - start) >= 5:
         printSummary(processes, totalSleep)
         processes = {}
+        sleeping = {}
+        waking = {}
         start = time.time()
 
 printSummary(processes, totalSleep)
