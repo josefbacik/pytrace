@@ -38,7 +38,7 @@ class Process:
         self.waketime += event.waketime
         self.numEvents += 1
 
-def toggleEvents(toggle, wakeups):
+def toggleEvents(toggle, wakeups=False):
     if toggle:
         ftrace.enableEvent("sched/sched_switch")
         if wakeups:
