@@ -6,7 +6,14 @@ import re
 #
 # Newer versions include things like need_resched and irqs disabled whereas
 # older versions don't, so we account for both cases in our RE.
-trace_re = re.compile("\s+(.*)-(\d+)\s+\[(\d+)\] (?:.... |)(\d+\.\d+): (.*)$")
+trace_re = re.compile("\s+(.*)-(\d+)\s+\[(\d+)\] (?:....\s+|)(\d+\.\d+): (.*)$")
+stacktrace_re = re.compile(" => (.+)")
+
+def parseStacktraceLine(line):
+    m = stacktrace_re.match(line)
+    if not m:
+        return None
+    return m.group(1)
 
 def traceParseLine(traceStr):
     m = trace_re.match(traceStr)
@@ -19,6 +26,11 @@ def traceParseLine(traceStr):
     trace["timestamp"] = float(m.group(4))
     trace["data"] = m.group(5)
     return trace
+
+def isStackTrace(data):
+    if data == "<stack trace>":
+        return True
+    return False
 
 class TraceLine:
 	def __init__(self, trace):
