@@ -76,13 +76,13 @@ def printStackTrace(stacktrace):
     for v in tracelist:
         print("\t\t\t" + v)
 
-def printSummary(processes, totalSleep):
-    print("Total slept for %f seconds" % totalSleep)
+def printSummary(processes, totalTime, totalSleep):
+    print("Total slept for %f seconds out of %f" % (totalSleep, totalTime))
     while processes:
         p = findSleepiestProcess(processes)
         process = processes[p]
         print("\tProcess %s-%d spent %f asleep %d cpu changes %d sleep/wake cycles, %f percentage of total" %
-                (process.comm, process.pid, process.sleeptime, process.cpuChanges, process.numEvents, ((process.sleeptime / totalSleep)) * 100))
+                (process.comm, process.pid, process.sleeptime, process.cpuChanges, process.numEvents, ((process.sleeptime / totalTime)) * 100))
         while process.events:
             e = findSleepiestEvent(process.events)
             event = process.events[e]
@@ -91,6 +91,8 @@ def printSummary(processes, totalSleep):
             printStackTrace(event.stacktrace)
             del process.events[e]
         for trace in sorted(process.wakeups, key=process.wakeups.get, reverse=True):
+            if trace == "":
+                continue
             print("\t\tWoken up %d times like this" % process.wakeups[trace])
             printStackTrace(trace)
         del processes[p]
@@ -98,10 +100,14 @@ def printSummary(processes, totalSleep):
 parser = argparse.ArgumentParser(description="Track top latency reason")
 parser.add_argument('infile', nargs='?', help='Process a tracefile')
 parser.add_argument('-w', action='store_true')
+parser.add_argument('-t', '--time', type=int, help="Only run for the given amount of seconds")
+parser.add_argument('-n', '--name', type=str, help="Only pay attention to processes with this name")
 
 args = parser.parse_args()
 infile = None
 continual = False
+runTime = 5
+liveSystem = False
 
 if not args.infile:
     traceDir = ftrace.getTraceDir()
@@ -109,9 +115,13 @@ if not args.infile:
         print("Please mount debugfs to use this feature")
         sys.exit(1)
     infile = open(traceDir+"trace_pipe", 'r')
-    continual = True
     toggleEvents(True, args.w)
     signal.signal(signal.SIGINT, signalHandler)
+    liveSystem = True
+    if args.time:
+        runTime = args.Runtime
+    else:
+        continual = True
 else:
     infile = open(args.infile, 'r')
 
@@ -122,6 +132,8 @@ stacktrace = 0
 start = time.time()
 curEvent = None
 totalSleep = 0.0
+firstTime = 0.0
+lastTime = 0.0
 
 for line in infile:
     trace = traceline.traceParseLine(line)
@@ -145,6 +157,10 @@ for line in infile:
                 else:
                     curEvent.wakeupStacktrace += ":" + func
         continue
+    if firstTime == 0.0:
+        firstTime = trace["timestamp"]
+    else:
+        lastTime = trace["timestamp"]
     stacktrace = 0
     curEvent = None
 
@@ -197,13 +213,20 @@ for line in infile:
     if eventDict["prev_pid"] == 0:
         continue
 
+    # Don't record events about processes we don't care about
+    if args.name and eventDict["prev_comm"].find(args.name) == -1:
+        continue
+
     e = sched.SchedSwitchEvent(trace, eventDict)
     sleeping[eventDict["prev_pid"]] = e
-    if continual and (time.time() - start) >= 5:
-        printSummary(processes, totalSleep)
+    if liveSystem and (time.time() - start) >= runTime:
+        if not continual:
+            break
+        printSummary(processes, lastTime - firstTime, totalSleep)
+        firstTime = 0.0
         processes = {}
         sleeping = {}
         waking = {}
         start = time.time()
 
-printSummary(processes, totalSleep)
+printSummary(processes, lastTime - firstTime, totalSleep)
