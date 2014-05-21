@@ -119,7 +119,7 @@ if not args.infile:
     signal.signal(signal.SIGINT, signalHandler)
     liveSystem = True
     if args.time:
-        runTime = args.Runtime
+        runTime = args.time
     else:
         continual = True
 else:
