@@ -1,5 +1,6 @@
 import re
 from traceline import TraceLine
+from ftrace import TimeRange
 
 # 3.14
 # sched_switch: prev_comm=umount prev_pid=7868 prev_prio=120 prev_state=D ==> next_comm=swapper/0 next_pid=0 next_prio=120
@@ -46,21 +47,23 @@ class SchedSwitchEvent(TraceLine):
         self.trace["comm"] = self.event["prev_comm"]
         if not self.event:
             raise ValueError
-        self.sleeptime = 0.0
-        self.waketime = 0.0
+        self.sleepRanges = None
+        self.timeToWake = 0.0
         self.stacktrace = ""
         self.wakeupStacktrace = ""
         self.changeCpu = False
+        self.woken = 0.0
 
     # This is when we get the sched_wakeup event, which is different from
     # actually waking up, we are just telling the scheduler we are ready to
     # wakeup the given pid.
     def wakeEvent(self, trace):
-        self.waketime = trace["timestamp"]
+        self.timeToWake = trace["timestamp"]
 
     # This is when we are actually placed onto the CPU to do our work
     def wakeup(self, trace):
-        self.sleeptime = trace["timestamp"] - self.trace["timestamp"]
-        self.waketime = trace["timestamp"] - self.waketime
+        self.woken = trace["timestamp"]
+        self.sleepRanges = TimeRange(self.trace["timestamp"], self.woken)
+        self.timeToWake = trace["timestamp"] - self.timeToWake
         if self.trace["cpu"] != trace["cpu"]:
             self.changeCpu = True

@@ -50,3 +50,37 @@ def getTraceDir():
             break
     f.close()
     return __m.traceDir
+
+class TimeRange():
+    def __init__(self, start, end):
+        self._range = { start : end }
+        self.total = end - start
+
+    def __inRange(self, w, x, y, z):
+        if z < w:
+            return False
+        if y > x:
+            return False
+        return True
+
+    def addRange(self, newstart, newend):
+        key = None
+        for start,end in self._range.iteritems():
+            if self.__inRange(start, end, newstart, newend):
+                key = start
+                break
+        if not key:
+            return
+        start = key
+        end = self._range[key]
+        if start > newstart:
+            del self._range[start]
+            self.total += start - newstart
+            if newend > end:
+                self._range[newstart] = newend
+                self.total += newend - end
+            else:
+                self._range[newstart] = end
+        elif newend > end:
+            self._range[start] = newend
+            self.total += newend - end

@@ -21,24 +21,24 @@ class Process:
         self.events = { event.stacktrace : event }
         self.wakeups = { event.wakeupStacktrace : 1 }
         self.numEvents = 1
-        self.sleeptime = event.sleeptime
-        self.waketime = event.waketime
+        self.waketime = event.timeToWake
         self.cpuChanges = 0
+        self.collapsed = collapsed
+        self.sleepRanges = ftrace.TimeRange(event.trace["timestamp"], event.woken)
 
     def addEvent(self, event):
         if event.stacktrace in self.events:
-            self.events[event.stacktrace].sleeptime += event.sleeptime
+            self.events[event.stacktrace].sleepRanges.addRange(event.trace["timestamp"], event.woken)
         else:
             self.events[event.stacktrace] = event
         if event.wakeupStacktrace in self.wakeups:
             self.wakeups[event.wakeupStacktrace] += 1
         else:
             self.wakeups[event.wakeupStacktrace] = 1
-
+        self.sleepRanges.addRange(event.trace["timestamp"], event.woken)
         if event.changeCpu:
             self.cpuChanges += 1
-        self.sleeptime += event.sleeptime
-        self.waketime += event.waketime
+        self.waketime += event.timeToWake
         self.numEvents += 1
 
 def toggleEvents(toggle, wakeups=False):
@@ -61,8 +61,8 @@ def findSleepiestProcess(processes):
     maxSleep = 0.0
     key = 0
     for process in processes.keys():
-        if processes[process].sleeptime > maxSleep:
-            maxSleep = processes[process].sleeptime
+        if processes[process].sleepRanges.total > maxSleep:
+            maxSleep = processes[process].sleepRanges.total
             key = process
     return key
 
@@ -70,8 +70,8 @@ def findSleepiestEvent(events):
     maxSleep = 0.0
     key = ""
     for e in events.keys():
-        if events[e].sleeptime > maxSleep:
-            maxSleep = events[e].sleeptime
+        if events[e].sleepRanges.total > maxSleep:
+            maxSleep = events[e].sleepRanges.total
             key = e
     return key
 
@@ -86,12 +86,12 @@ def printSummary(processes, totalTime):
         p = findSleepiestProcess(processes)
         process = processes[p]
         print("\tProcess %s-%d spent %f asleep %d cpu changes %d sleep/wake cycles, %f percentage of total" %
-                (process.comm, process.pid, process.sleeptime, process.cpuChanges, process.numEvents, ((process.sleeptime / totalTime)) * 100))
+                (process.comm, process.pid, process.sleepRanges.total, process.cpuChanges, process.numEvents, ((process.sleepRanges.total / totalTime)) * 100))
         while process.events:
             e = findSleepiestEvent(process.events)
             event = process.events[e]
             print("\t\tSpent %f seconds in here, %f percentage of sleep time" %
-                    (event.sleeptime, ((event.sleeptime / process.sleeptime) * 100)))
+                    (event.sleepRanges.total, ((event.sleepRanges.total / process.sleepRanges.total) * 100)))
             printStackTrace(event.stacktrace)
             del process.events[e]
         for trace in sorted(process.wakeups, key=process.wakeups.get, reverse=True):
