@@ -30,6 +30,12 @@ def disableStackTrace():
     eventFile.write("0")
     eventFile.close()
 
+def clearTraceBuffer():
+    traceDir = getTraceDir()
+    traceFile = open(traceDir+"trace", 'w')
+    traceFile.write("")
+    traceFile.close()
+
 def getTraceDir():
     if __m.traceDir != "":
         return __m.traceDir

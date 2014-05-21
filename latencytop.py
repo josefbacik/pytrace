@@ -44,6 +44,7 @@ def toggleEvents(toggle, wakeups=False):
         if wakeups:
             ftrace.enableEvent("sched/sched_wakeup")
         ftrace.enableStackTrace()
+        ftrace.clearTraceBuffer()
     else:
         ftrace.disableEvent("sched/sched_switch")
         ftrace.disableEvent("sched/sched_wakeup")
@@ -221,6 +222,7 @@ for line in infile:
     sleeping[eventDict["prev_pid"]] = e
     if liveSystem and (time.time() - start) >= runTime:
         if not continual:
+            toggleEvents(False, args.w)
             break
         printSummary(processes, lastTime - firstTime, totalSleep)
         firstTime = 0.0
