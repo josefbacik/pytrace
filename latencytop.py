@@ -12,8 +12,11 @@ import time
 # We want to keep track of total sleep time per stacktrace per process, so heres
 # a basic class to aggregate all of this stuff in one place
 class Process:
-    def __init__(self, event):
-        self.pid = event.trace["pid"]
+    def __init__(self, event, collapsed):
+        if collapsed:
+            self.pid = 0
+        else:
+            self.pid = event.trace["pid"]
         self.comm = event.trace["comm"]
         self.events = { event.stacktrace : event }
         self.wakeups = { event.wakeupStacktrace : 1 }
@@ -104,6 +107,7 @@ parser.add_argument('-w', action='store_true')
 parser.add_argument('-t', '--time', type=int, help="Only run for the given amount of seconds")
 parser.add_argument('-n', '--name', type=str, help="Only pay attention to processes with this name")
 parser.add_argument('-o', '--output', type=str, help="Write all trace data to this file")
+parser.add_argument('-c', '--collapse', action='store_true', help="Collapse all comms into one big event")
 
 args = parser.parse_args()
 infile = None
@@ -208,10 +212,13 @@ for line in infile:
     if eventDict["next_pid"] in sleeping:
         e = sleeping[eventDict["next_pid"]]
         e.wakeup(trace)
-        if e.trace["pid"] in processes:
-            processes[e.trace["pid"]].addEvent(e)
+        key = e.trace["pid"]
+        if args.collapse:
+            key = e.trace["comm"]
+        if key in processes:
+            processes[key].addEvent(e)
         else:
-            processes[e.trace["pid"]] = Process(e)
+            processes[key] = Process(e, args.collapse)
         del sleeping[eventDict["next_pid"]]
 
     # Nobody cares about you idle processes
