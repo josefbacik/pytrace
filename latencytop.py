@@ -122,7 +122,7 @@ if not args.infile:
         print("Please mount debugfs to use this feature")
         sys.exit(1)
     infile = open(traceDir+"trace_pipe", 'r')
-    if args.output != "":
+    if args.output:
         traceFile = open(args.output, "w+")
     toggleEvents(True, args.w)
     signal.signal(signal.SIGINT, signalHandler)
