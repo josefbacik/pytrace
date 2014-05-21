@@ -104,7 +104,7 @@ def printSummary(processes, totalTime):
 parser = argparse.ArgumentParser(description="Track top latency reason")
 parser.add_argument('infile', nargs='?', help='Process a tracefile')
 parser.add_argument('-w', action='store_true')
-parser.add_argument('-t', '--time', type=int, help="Only run for the given amount of seconds")
+parser.add_argument('-t', '--time', type=float, help="Only run for the given amount of seconds")
 parser.add_argument('-n', '--name', type=str, help="Only pay attention to processes with this name")
 parser.add_argument('-o', '--output', type=str, help="Write all trace data to this file")
 parser.add_argument('-c', '--collapse', action='store_true', help="Collapse all comms into one big event")

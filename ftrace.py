@@ -70,17 +70,17 @@ class TimeRange():
                 key = start
                 break
         if not key:
+            self._range[newstart] = newend
+            self.total += newend - newstart
             return
         start = key
         end = self._range[key]
+        if start <= newstart and end >= newend:
+            return
+        del self._range[start]
+        self.total -= end - start
         if start > newstart:
-            del self._range[start]
-            self.total += start - newstart
-            if newend > end:
-                self._range[newstart] = newend
-                self.total += newend - end
-            else:
-                self._range[newstart] = end
-        elif newend > end:
-            self._range[start] = newend
-            self.total += newend - end
+            start = newstart
+        if newend > end:
+            end = newend
+        self.addRange(start, end)
