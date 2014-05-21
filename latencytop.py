@@ -77,8 +77,8 @@ def printStackTrace(stacktrace):
     for v in tracelist:
         print("\t\t\t" + v)
 
-def printSummary(processes, totalTime, totalSleep):
-    print("Total slept for %f seconds out of %f" % (totalSleep, totalTime))
+def printSummary(processes, totalTime):
+    print("Total time run %f seconds" % totalTime)
     while processes:
         p = findSleepiestProcess(processes)
         process = processes[p]
@@ -103,12 +103,14 @@ parser.add_argument('infile', nargs='?', help='Process a tracefile')
 parser.add_argument('-w', action='store_true')
 parser.add_argument('-t', '--time', type=int, help="Only run for the given amount of seconds")
 parser.add_argument('-n', '--name', type=str, help="Only pay attention to processes with this name")
+parser.add_argument('-o', '--output', type=str, help="Write all trace data to this file")
 
 args = parser.parse_args()
 infile = None
 continual = False
 runTime = 5
 liveSystem = False
+traceFile = None
 
 if not args.infile:
     traceDir = ftrace.getTraceDir()
@@ -116,6 +118,8 @@ if not args.infile:
         print("Please mount debugfs to use this feature")
         sys.exit(1)
     infile = open(traceDir+"trace_pipe", 'r')
+    if args.output != "":
+        traceFile = open(args.output, "w+")
     toggleEvents(True, args.w)
     signal.signal(signal.SIGINT, signalHandler)
     liveSystem = True
@@ -132,11 +136,12 @@ waking = {}
 stacktrace = 0
 start = time.time()
 curEvent = None
-totalSleep = 0.0
 firstTime = 0.0
 lastTime = 0.0
 
 for line in infile:
+    if traceFile:
+        traceFile.write(line)
     trace = traceline.traceParseLine(line)
     if not trace:
         if stacktrace > 0:
@@ -203,7 +208,6 @@ for line in infile:
     if eventDict["next_pid"] in sleeping:
         e = sleeping[eventDict["next_pid"]]
         e.wakeup(trace)
-        totalSleep += e.sleeptime
         if e.trace["pid"] in processes:
             processes[e.trace["pid"]].addEvent(e)
         else:
@@ -224,11 +228,13 @@ for line in infile:
         if not continual:
             toggleEvents(False, args.w)
             break
-        printSummary(processes, lastTime - firstTime, totalSleep)
+        printSummary(processes, lastTime - firstTime)
         firstTime = 0.0
         processes = {}
         sleeping = {}
         waking = {}
         start = time.time()
 
-printSummary(processes, lastTime - firstTime, totalSleep)
+printSummary(processes, lastTime - firstTime)
+if traceFile:
+    traceFile.close()
