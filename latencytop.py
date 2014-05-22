@@ -21,7 +21,10 @@ class Process:
         self.events = { event.stacktrace : event }
         self.wakeups = { event.wakeupStacktrace : 1 }
         self.numEvents = 1
-        self.waketime = event.timeToWake
+        if event.hadWakeEvent:
+            self.waketime = { "avg" : event.timeToWake, "min" : event.timeToWake, "max" : event.timeToWake }
+        else:
+            self.waketime = { "avg" : 0.0, "min" : 1000000000.0, "max" : 0.0 }
         self.cpuChanges = 0
         self.collapsed = collapsed
         self.sleepRanges = ftrace.TimeRange(event.trace["timestamp"], event.woken)
@@ -38,7 +41,16 @@ class Process:
         self.sleepRanges.addRange(event.trace["timestamp"], event.woken)
         if event.changeCpu:
             self.cpuChanges += 1
-        self.waketime += event.timeToWake
+        if event.hadWakeEvent:
+            if self.waketime["avg"] > 0.0:
+                self.waketime["avg"] += event.timeToWake
+                self.waketime["avg"] /= 2
+            else:
+                self.waketime["avg"] = event.timeToWake
+            if event.timeToWake > self.waketime["max"]:
+                self.waketime["max"] = event.timeToWake
+            if event.timeToWake < self.waketime["min"]:
+                self.waketime["min"] = event.timeToWake
         self.numEvents += 1
 
 def toggleEvents(toggle, wakeups=False):
@@ -78,26 +90,32 @@ def findSleepiestEvent(events):
 def printStackTrace(stacktrace):
     tracelist = stacktrace.split(':')
     for v in tracelist:
-        print("\t\t\t" + v)
+        print("\t\t" + v)
 
 def printSummary(processes, totalTime):
     print("Total time run %f seconds" % totalTime)
     while processes:
         p = findSleepiestProcess(processes)
         process = processes[p]
-        print("\tProcess %s-%d spent %f asleep %d cpu changes %d sleep/wake cycles, %f percentage of total" %
-                (process.comm, process.pid, process.sleepRanges.total, process.cpuChanges, process.numEvents, ((process.sleepRanges.total / totalTime)) * 100))
+        print("Process %s-%d" % (process.comm, process.pid))
+        print("=> Time asleep:\t\t\t%f" % process.sleepRanges.total)
+        print("=> Cpu changes:\t\t\t%d" % process.cpuChanges)
+        print("=> Num sleep/wake cycles:\t%d" % process.numEvents)
+        if process.waketime["avg"] > 0.0:
+            print("=> Wake latency min,avg,max:\t%f, %f, %f" %
+                  (process.waketime["min"], process.waketime["avg"], process.waketime["max"]))
+        print("=> Percentage of total:\t\t%f" % ((process.sleepRanges.total / totalTime) * 100))
         while process.events:
             e = findSleepiestEvent(process.events)
             event = process.events[e]
-            print("\t\tSpent %f seconds in here, %f percentage of sleep time" %
+            print("\tSpent %f seconds in here, %f percentage of sleep time" %
                     (event.sleepRanges.total, ((event.sleepRanges.total / process.sleepRanges.total) * 100)))
             printStackTrace(event.stacktrace)
             del process.events[e]
         for trace in sorted(process.wakeups, key=process.wakeups.get, reverse=True):
             if trace == "":
                 continue
-            print("\t\tWoken up %d times like this" % process.wakeups[trace])
+            print("\tWoken up %d times like this" % process.wakeups[trace])
             printStackTrace(trace)
         del processes[p]
 

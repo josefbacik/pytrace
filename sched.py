@@ -53,17 +53,20 @@ class SchedSwitchEvent(TraceLine):
         self.wakeupStacktrace = ""
         self.changeCpu = False
         self.woken = 0.0
+        self.hadWakeEvent = False
 
     # This is when we get the sched_wakeup event, which is different from
     # actually waking up, we are just telling the scheduler we are ready to
     # wakeup the given pid.
     def wakeEvent(self, trace):
         self.timeToWake = trace["timestamp"]
+        self.hadWakeEvent = True
 
     # This is when we are actually placed onto the CPU to do our work
     def wakeup(self, trace):
         self.woken = trace["timestamp"]
         self.sleepRanges = TimeRange(self.trace["timestamp"], self.woken)
-        self.timeToWake = trace["timestamp"] - self.timeToWake
+        if self.hadWakeEvent:
+            self.timeToWake = trace["timestamp"] - self.timeToWake
         if self.trace["cpu"] != trace["cpu"]:
             self.changeCpu = True
