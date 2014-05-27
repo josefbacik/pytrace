@@ -36,6 +36,30 @@ def clearTraceBuffer():
     traceFile.write("")
     traceFile.close()
 
+def filterPid(pid):
+    traceDir = getTraceDir()
+    traceFile = open(traceDir+"set_ftrace_pid", 'w')
+    traceFile.write(str(pid))
+    traceFile.close()
+
+def clearFilterPid():
+    traceDir = getTraceDir()
+    traceFile = open(traceDir+"set_ftrace_pid", 'w')
+    traceFile.write("")
+    traceFile.close()
+
+def enableFtrace():
+    traceDir = getTraceDir()
+    traceFile = open(traceDir+"tracing_on", 'w')
+    traceFile.write("1")
+    traceFile.close()
+
+def disableFtrace():
+    traceDir = getTraceDir()
+    traceFile = open(traceDir+"tracing_on", 'w')
+    traceFile.write("0")
+    traceFile.close()
+
 def getTraceDir():
     if __m.traceDir != "":
         return __m.traceDir

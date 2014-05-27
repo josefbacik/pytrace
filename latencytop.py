@@ -8,6 +8,9 @@ import signal
 import sys
 import sched
 import time
+from subprocess import Popen
+import os
+import shlex
 
 # We want to keep track of total sleep time per stacktrace per process, so heres
 # a basic class to aggregate all of this stuff in one place
@@ -53,17 +56,22 @@ class Process:
                 self.waketime["min"] = event.timeToWake
         self.numEvents += 1
 
-def toggleEvents(toggle, wakeups=False):
+def toggleEvents(toggle, wakeups=False, command=None):
     if toggle:
         ftrace.enableEvent("sched/sched_switch")
         if wakeups:
             ftrace.enableEvent("sched/sched_wakeup")
+        if command:
+            ftrace.filterPid(os.getpid())
         ftrace.enableStackTrace()
         ftrace.clearTraceBuffer()
+        ftrace.enableFtrace()
     else:
+        ftrace.disableFtrace()
         ftrace.disableEvent("sched/sched_switch")
         ftrace.disableEvent("sched/sched_wakeup")
         ftrace.disableStackTrace()
+        ftrace.clearFilterPid()
 
 def signalHandler(signal, frame):
     toggleEvents(False)
@@ -126,6 +134,7 @@ parser.add_argument('-t', '--time', type=float, help="Only run for the given amo
 parser.add_argument('-n', '--name', type=str, help="Only pay attention to processes with this name")
 parser.add_argument('-o', '--output', type=str, help="Write all trace data to this file")
 parser.add_argument('-c', '--collapse', action='store_true', help="Collapse all comms into one big event")
+parser.add_argument('-r', '--run', type=str, help="Run and profile this command")
 
 args = parser.parse_args()
 infile = None
@@ -142,7 +151,7 @@ if not args.infile:
     infile = open(traceDir+"trace_pipe", 'r')
     if args.output:
         traceFile = open(args.output, "w+")
-    toggleEvents(True, args.w)
+    toggleEvents(True, args.w, args.run)
     signal.signal(signal.SIGINT, signalHandler)
     liveSystem = True
     if args.time:
@@ -160,6 +169,13 @@ start = time.time()
 curEvent = None
 firstTime = 0.0
 lastTime = 0.0
+commandP = None
+exited = False
+devNull = None
+
+if args.run:
+    devNull = open("/dev/null", 'w')
+    commandP = Popen(shlex.split(args.run), stdout=devNull, stderr=devNull)
 
 for line in infile:
     if traceFile:
@@ -243,13 +259,16 @@ for line in infile:
     if eventDict["prev_pid"] == 0:
         continue
 
+    if commandP and eventDict["prev_pid"] != commandP.pid:
+        continue
+
     # Don't record events about processes we don't care about
     if args.name and eventDict["prev_comm"].find(args.name) == -1:
         continue
 
     e = sched.SchedSwitchEvent(trace, eventDict)
     sleeping[eventDict["prev_pid"]] = e
-    if liveSystem and (time.time() - start) >= runTime:
+    if not commandP and liveSystem and (time.time() - start) >= runTime:
         if not continual:
             toggleEvents(False, args.w)
             break
@@ -260,6 +279,17 @@ for line in infile:
         waking = {}
         start = time.time()
 
+    # Check to see if our command exited, if it did disable polling and
+    # trace_pipe will return EOF once we've gotten the rest of the stuff in the
+    # buffer.
+    if commandP and not exited:
+        retval = commandP.poll()
+        if retval is not None:
+            exited = True
+            ftrace.disableFtrace()
+
 printSummary(processes, lastTime - firstTime)
 if traceFile:
     traceFile.close()
+if args.run:
+    devNull.close()
