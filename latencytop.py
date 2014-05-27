@@ -11,6 +11,7 @@ import time
 from subprocess import Popen
 import os
 import shlex
+import select
 
 # We want to keep track of total sleep time per stacktrace per process, so heres
 # a basic class to aggregate all of this stuff in one place
@@ -142,13 +143,16 @@ continual = False
 runTime = 5
 liveSystem = False
 traceFile = None
+poll = select.poll()
 
 if not args.infile:
     traceDir = ftrace.getTraceDir()
     if traceDir == "":
         print("Please mount debugfs to use this feature")
         sys.exit(1)
-    infile = open(traceDir+"trace_pipe", 'r')
+    infd = os.open(traceDir+"trace_pipe", os.O_RDONLY|os.O_NONBLOCK)
+    poll.register(infd, select.POLLIN)
+    infile = os.fdopen(infd)
     if args.output:
         traceFile = open(args.output, "w+")
     toggleEvents(True, args.w, args.run)
@@ -177,116 +181,127 @@ if args.run:
     devNull = open("/dev/null", 'w')
     commandP = Popen(shlex.split(args.run), stdout=devNull, stderr=devNull)
 
-for line in infile:
-    if traceFile:
-        traceFile.write(line)
-    trace = traceline.traceParseLine(line)
-    if not trace:
-        if stacktrace > 0:
-            func = traceline.parseStacktraceLine(line)
-            if not func:
-                stacktrace = 0
-                curEvent = None
-                continue
-            if not curEvent:
-                continue
-            if stacktrace == 1:
-                if curEvent.stacktrace == "":
-                    curEvent.stacktrace = func
-                else:
-                    curEvent.stacktrace += ":" + func
-            else:
-                if curEvent.wakeupStacktrace == "":
-                    curEvent.wakeupStacktrace = func
-                else:
-                    curEvent.wakeupStacktrace += ":" + func
-        continue
-    if firstTime == 0.0:
-        firstTime = trace["timestamp"]
-    else:
-        lastTime = trace["timestamp"]
-    stacktrace = 0
-    curEvent = None
-
-    # We can get a couple of sched events before we start to spit out the stack
-    # trace so we need to pay attention to the pid in the stack trace line and
-    # pick out the right event
-    if traceline.isStackTrace(trace["data"]):
-        if trace["pid"] in sleeping:
-            # Sometimes we can miss wakeup messages, and we've already gotten a
-            # stacktrace for this event, if this is the case just skip this
-            # stacktrace and delete this event
-            curEvent = sleeping[trace["pid"]]
-            if curEvent.stacktrace == "":
-                stacktrace = 1
-            else:
-                curEvent = None
-                del sleeping[trace["pid"]]
-        elif trace["pid"] in waking:
-            stacktrace = 2
-            curEvent = waking[trace["pid"]]
-            del waking[trace["pid"]]
-        continue
-
-    # Wakeup actions are going to happen from a different PID for a given PID
-    # so we just want to find the sleeper and start the wakeup timer and then
-    # setup a pending waker so we can scrape it's stacktrace
-    eventDict = sched.schedWakeupParse(trace["data"])
-    if eventDict:
-        if eventDict["pid"] in sleeping:
-            e = sleeping[eventDict["pid"]]
-            e.wakeEvent(trace)
-            waking[trace["pid"]] = e
-        continue
-
-    # Still need to track the sched_switch wakeup part since that is when we
-    # actually load the process onto the CPU and make it do shit.  Only then we
-    # can remove it from our sleeping dict and add it to the process
-    eventDict = sched.schedSwitchParse(trace["data"])
-    if eventDict["next_pid"] in sleeping:
-        e = sleeping[eventDict["next_pid"]]
-        e.wakeup(trace)
-        key = e.trace["pid"]
-        if args.collapse:
-            key = e.trace["comm"]
-        if key in processes:
-            processes[key].addEvent(e)
-        else:
-            processes[key] = Process(e, args.collapse)
-        del sleeping[eventDict["next_pid"]]
-
-    # Nobody cares about you idle processes
-    if eventDict["prev_pid"] == 0:
-        continue
-
-    if commandP and eventDict["prev_pid"] != commandP.pid:
-        continue
-
-    # Don't record events about processes we don't care about
-    if args.name and eventDict["prev_comm"].find(args.name) == -1:
-        continue
-
-    e = sched.SchedSwitchEvent(trace, eventDict)
-    sleeping[eventDict["prev_pid"]] = e
-    if not commandP and liveSystem and (time.time() - start) >= runTime:
-        if not continual:
-            toggleEvents(False, args.w)
+while 1:
+    results = poll.poll(100)
+    if not results:
+        if exited:
             break
-        printSummary(processes, lastTime - firstTime)
-        firstTime = 0.0
-        processes = {}
-        sleeping = {}
-        waking = {}
-        start = time.time()
+        continue
+    while 1:
+        try:
+            line = infile.readline()
+        except:
+            break
+        if traceFile:
+            traceFile.write(line)
+        trace = traceline.traceParseLine(line)
+        if not trace:
+            if stacktrace > 0:
+                func = traceline.parseStacktraceLine(line)
+                if not func:
+                    stacktrace = 0
+                    curEvent = None
+                    continue
+                if not curEvent:
+                    continue
+                if stacktrace == 1:
+                    if curEvent.stacktrace == "":
+                        curEvent.stacktrace = func
+                    else:
+                        curEvent.stacktrace += ":" + func
+                else:
+                    if curEvent.wakeupStacktrace == "":
+                        curEvent.wakeupStacktrace = func
+                    else:
+                        curEvent.wakeupStacktrace += ":" + func
+            continue
+        if firstTime == 0.0:
+            firstTime = trace["timestamp"]
+        else:
+            lastTime = trace["timestamp"]
+        stacktrace = 0
+        curEvent = None
 
-    # Check to see if our command exited, if it did disable polling and
-    # trace_pipe will return EOF once we've gotten the rest of the stuff in the
-    # buffer.
-    if commandP and not exited:
-        retval = commandP.poll()
-        if retval is not None:
-            exited = True
-            ftrace.disableFtrace()
+        # We can get a couple of sched events before we start to spit out the
+        # stack trace so we need to pay attention to the pid in the stack trace
+        # line and pick out the right event
+        if traceline.isStackTrace(trace["data"]):
+            if trace["pid"] in sleeping:
+                # Sometimes we can miss wakeup messages, and we've already
+                # gotten a stacktrace for this event, if this is the case just
+                # skip this stacktrace and delete this event
+                curEvent = sleeping[trace["pid"]]
+                if curEvent.stacktrace == "":
+                    stacktrace = 1
+                else:
+                    curEvent = None
+                    del sleeping[trace["pid"]]
+            elif trace["pid"] in waking:
+                stacktrace = 2
+                curEvent = waking[trace["pid"]]
+                del waking[trace["pid"]]
+            continue
+
+        # Wakeup actions are going to happen from a different PID for a given
+        # PID so we just want to find the sleeper and start the wakeup timer and
+        # then setup a pending waker so we can scrape it's stacktrace
+        eventDict = sched.schedWakeupParse(trace["data"])
+        if eventDict:
+            if eventDict["pid"] in sleeping:
+                e = sleeping[eventDict["pid"]]
+                e.wakeEvent(trace)
+                waking[trace["pid"]] = e
+            continue
+
+        # Still need to track the sched_switch wakeup part since that is when we
+        # actually load the process onto the CPU and make it do shit.  Only then
+        # we can remove it from our sleeping dict and add it to the process
+        eventDict = sched.schedSwitchParse(trace["data"])
+        if eventDict["next_pid"] in sleeping:
+            e = sleeping[eventDict["next_pid"]]
+            e.wakeup(trace)
+            key = e.trace["pid"]
+            if args.collapse:
+                key = e.trace["comm"]
+            if key in processes:
+                processes[key].addEvent(e)
+            else:
+                processes[key] = Process(e, args.collapse)
+            del sleeping[eventDict["next_pid"]]
+
+        # Nobody cares about you idle processes
+        if eventDict["prev_pid"] == 0:
+            continue
+
+        if commandP and eventDict["prev_pid"] != commandP.pid:
+            continue
+
+        # Don't record events about processes we don't care about
+        if args.name and eventDict["prev_comm"].find(args.name) == -1:
+            continue
+
+        e = sched.SchedSwitchEvent(trace, eventDict)
+        sleeping[eventDict["prev_pid"]] = e
+        if not commandP and liveSystem and (time.time() - start) >= runTime:
+            if not continual:
+                toggleEvents(False, args.w)
+                exited = True
+                break
+            printSummary(processes, lastTime - firstTime)
+            firstTime = 0.0
+            processes = {}
+            sleeping = {}
+            waking = {}
+            start = time.time()
+
+        # Check to see if our command exited, if it did disable polling and
+        # trace_pipe will return EOF once we've gotten the rest of the stuff in
+        # the buffer.
+        if commandP and not exited:
+            retval = commandP.poll()
+            if retval is not None:
+                exited = True
+                ftrace.disableFtrace()
 
 printSummary(processes, lastTime - firstTime)
 if traceFile:
