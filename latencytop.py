@@ -136,6 +136,7 @@ parser.add_argument('-n', '--name', type=str, help="Only pay attention to proces
 parser.add_argument('-o', '--output', type=str, help="Write all trace data to this file")
 parser.add_argument('-c', '--collapse', action='store_true', help="Collapse all comms into one big event")
 parser.add_argument('-r', '--run', type=str, help="Run and profile this command")
+parser.add_argument('-p', '--pid', type=int, help="Profile a specific pid")
 
 args = parser.parse_args()
 infile = None
@@ -274,6 +275,9 @@ while 1:
             continue
 
         if commandP and eventDict["prev_pid"] != commandP.pid:
+            continue
+
+        if args.pid and eventDict["prev_pid"] != args.pid:
             continue
 
         # Don't record events about processes we don't care about
