@@ -40,7 +40,7 @@ def filterPid(pid):
     traceDir = getTraceDir()
     try:
         traceFile = open(traceDir+"set_ftrace_pid", 'w')
-    except e:
+    except:
         # Older kernels don't have set_ftrace_pid, losers
         return
     traceFile.write(str(pid))
@@ -50,7 +50,7 @@ def clearFilterPid():
     traceDir = getTraceDir()
     try:
         traceFile = open(traceDir+"set_ftrace_pid", 'w')
-    except e:
+    except:
         # Older kernels don't have set_ftrace_pid
         return
     traceFile.write("")
