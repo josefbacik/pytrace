@@ -38,13 +38,21 @@ def clearTraceBuffer():
 
 def filterPid(pid):
     traceDir = getTraceDir()
-    traceFile = open(traceDir+"set_ftrace_pid", 'w')
+    try:
+        traceFile = open(traceDir+"set_ftrace_pid", 'w')
+    except e:
+        # Older kernels don't have set_ftrace_pid, losers
+        return
     traceFile.write(str(pid))
     traceFile.close()
 
 def clearFilterPid():
     traceDir = getTraceDir()
-    traceFile = open(traceDir+"set_ftrace_pid", 'w')
+    try:
+        traceFile = open(traceDir+"set_ftrace_pid", 'w')
+    except e:
+        # Older kernels don't have set_ftrace_pid
+        return
     traceFile.write("")
     traceFile.close()
 
